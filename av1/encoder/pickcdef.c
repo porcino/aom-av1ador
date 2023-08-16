@@ -825,7 +825,8 @@ void av1_cdef_search(MultiThreadInfo *mt_info, const YV12_BUFFER_CONFIG *frame,
                      const int is_screen_content, int non_reference_frame,
                      int rtc_ext_rc) {
   assert(cdef_control != CDEF_NONE);
-  if (cdef_control == CDEF_REFERENCE && non_reference_frame) {
+  const int saltear = (cm->quant_params.base_qindex - 130) * 100 / 125;
+  if ((cdef_control == CDEF_REFERENCE && non_reference_frame) || saltear <= 0) {
     CdefInfo *const cdef_info = &cm->cdef_info;
     cdef_info->nb_cdef_strengths = 1;
     cdef_info->cdef_bits = 0;
@@ -941,7 +942,8 @@ void av1_cdef_search(MultiThreadInfo *mt_info, const YV12_BUFFER_CONFIG *frame,
     }
   }
 
-  cdef_info->cdef_damping = damping;
+  cdef_info->cdef_damping = damping * (((cm->quant_params.base_qindex - 140) * 100 / 115) / 100);
+  if (cdef_info->cdef_damping < 1) cdef_info->cdef_damping = 1;
   // Deallocate CDEF search context buffers.
   cdef_dealloc_data(&cdef_search_ctx);
 }

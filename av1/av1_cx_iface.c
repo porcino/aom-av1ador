@@ -367,11 +367,11 @@ static const struct av1_extracfg default_extra_cfg = {
 };
 #else
 static const struct av1_extracfg default_extra_cfg = {
-  0,              // cpu_used
+  4,              // cpu_used
   1,              // enable_auto_alt_ref
   0,              // enable_auto_bwd_ref
   0,              // noise_sensitivity
-  0,              // sharpness
+  4,              // sharpness
   0,              // static_thresh
   1,              // row_mt
   0,              // fp_mt
@@ -379,13 +379,13 @@ static const struct av1_extracfg default_extra_cfg = {
   0,              // tile_rows
   1,              // enable_tpl_model
   1,              // enable_keyframe_filtering
-  7,              // arnr_max_frames
-  5,              // arnr_strength
+  3,              // arnr_max_frames
+  4,              // arnr_strength
   0,              // min_gf_interval; 0 -> default decision
   0,              // max_gf_interval; 0 -> default decision
   0,              // gf_min_pyr_height
   5,              // gf_max_pyr_height
-  AOM_TUNE_PSNR,  // tuning
+  AOM_TUNE_SSIM,  // tuning
   "/usr/local/share/model/vmaf_v0.6.1.json",  // VMAF model path
   ".",                                        // partition info path
   0,                                          // enable rate guide deltaq
@@ -397,11 +397,11 @@ static const struct av1_extracfg default_extra_cfg = {
   0,                                          // gf_cbr_boost_pct
   0,                                          // lossless
   1,                                          // enable_cdef
-  1,                                          // enable_restoration
+  0,                                          // enable_restoration
   0,                                          // force_video_mode
-  1,                                          // enable_obmc
-  3,                                          // disable_trellis_quant
-  0,                                          // enable_qm
+  0,                                          // enable_obmc
+  2,                                          // disable_trellis_quant
+  1,                                          // enable_qm
   DEFAULT_QM_Y,                               // qm_y
   DEFAULT_QM_U,                               // qm_u
   DEFAULT_QM_V,                               // qm_v
@@ -476,8 +476,8 @@ static const struct av1_extracfg default_extra_cfg = {
   1,   // enable angle delta
 #if CONFIG_DENOISE
   0,   // noise_level
-  32,  // noise_block_size
-  1,   // enable_dnl_denoising
+  16,  // noise_block_size
+  0,   // enable_dnl_denoising
 #endif
   0,   // chroma_subsampling_x
   0,   // chroma_subsampling_y

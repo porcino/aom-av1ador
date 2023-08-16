@@ -672,7 +672,7 @@ static AOM_INLINE void set_vbp_thresholds(
     bool is_segment_id_boosted, int lighting_change) {
   AV1_COMMON *const cm = &cpi->common;
   const int is_key_frame = frame_is_intra_only(cm);
-  const int threshold_multiplier = is_key_frame ? 120 : 1;
+  const int threshold_multiplier = is_key_frame ? 120 : cm->quant_params.base_qindex/16;
   const int ac_q = av1_ac_quant_QTX(qindex, 0, cm->seq_params->bit_depth);
   int64_t threshold_base = (int64_t)(threshold_multiplier * ac_q);
   const int current_qindex = cm->quant_params.base_qindex;

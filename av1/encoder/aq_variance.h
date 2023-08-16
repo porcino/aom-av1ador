@@ -27,6 +27,8 @@ int av1_compute_q_from_energy_level_deltaq_mode(const AV1_COMP *const cpi,
                                                 int block_var_level);
 int av1_block_wavelet_energy_level(const AV1_COMP *cpi, MACROBLOCK *x,
                                    BLOCK_SIZE bs);
+double av1_log_block_wavelet_energy(MACROBLOCK *x, BLOCK_SIZE bs);
+int av1_log_block_y(MACROBLOCK *x, BLOCK_SIZE bs, bool is_8bit);
 
 #ifdef __cplusplus
 }  // extern "C"

@@ -242,7 +242,7 @@ void av1_setup_src_planes(MACROBLOCK *x, const YV12_BUFFER_CONFIG *src,
 static AOM_INLINE void setup_delta_q(AV1_COMP *const cpi, ThreadData *td,
                                      MACROBLOCK *const x,
                                      const TileInfo *const tile_info,
-                                     int mi_row, int mi_col, int num_planes) {
+                                     int mi_row, int mi_col, int num_planes, bool plusdq) {
   AV1_COMMON *const cm = &cpi->common;
   const CommonModeInfoParams *const mi_params = &cm->mi_params;
   const DeltaQInfo *const delta_q_info = &cm->delta_q_info;
@@ -254,6 +254,7 @@ static AOM_INLINE void setup_delta_q(AV1_COMP *const cpi, ThreadData *td,
 
   const int delta_q_res = delta_q_info->delta_q_res;
   int current_qindex = cm->quant_params.base_qindex;
+  if (plusdq) {
   if (cpi->use_ducky_encode && cpi->ducky_encode_info.frame_info.qp_mode ==
                                    DUCKY_ENCODE_FRAME_MODE_QINDEX) {
     const int sb_row = mi_row >> cm->seq_params->mib_size_log2;
@@ -288,6 +289,8 @@ static AOM_INLINE void setup_delta_q(AV1_COMP *const cpi, ThreadData *td,
   } else if (cpi->oxcf.q_cfg.enable_hdr_deltaq) {
     current_qindex = av1_get_q_for_hdr(cpi, x, sb_size, mi_row, mi_col);
   }
+  }
+  current_qindex -= cm->quant_params.base_qindex * ((2000 / (av1_log_block_y(x, sb_size, cm->seq_params->bit_depth == AOM_BITS_8) + 85)) - 10) / 14;
 
   x->rdmult_cur_qindex = current_qindex;
   MACROBLOCKD *const xd = &x->e_mbd;
@@ -603,12 +606,13 @@ static INLINE void init_encode_rd_sb(AV1_COMP *cpi, ThreadData *td,
     x->sb_energy_level = 0;
     x->part_search_info.cnn_output_valid = 0;
     if (gather_tpl_data) {
+      const int num_planes = av1_num_planes(cm);
+      const BLOCK_SIZE sb_size = cm->seq_params->sb_size;
       if (cm->delta_q_info.delta_q_present_flag) {
-        const int num_planes = av1_num_planes(cm);
-        const BLOCK_SIZE sb_size = cm->seq_params->sb_size;
-        setup_delta_q(cpi, td, x, tile_info, mi_row, mi_col, num_planes);
-        av1_tpl_rdmult_setup_sb(cpi, x, sb_size, mi_row, mi_col);
-      }
+        setup_delta_q(cpi, td, x, tile_info, mi_row, mi_col, num_planes, true);
+      } else
+        setup_delta_q(cpi, td, x, tile_info, mi_row, mi_col, num_planes, false);
+      av1_tpl_rdmult_setup_sb(cpi, x, sb_size, mi_row, mi_col);
 
       // TODO(jingning): revisit this function.
       if (cpi->oxcf.algo_cfg.enable_tpl_model && (0)) {

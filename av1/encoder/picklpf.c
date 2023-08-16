@@ -115,7 +115,7 @@ static int search_filter_level(const YV12_BUFFER_CONFIG *sd, AV1_COMP *cpi,
     case 2: lvl = last_frame_filter_level[3]; break;
     default: assert(plane >= 0 && plane <= 2); return 0;
   }
-  int filt_mid = clamp(lvl, min_filter_level, max_filter_level);
+  int filt_mid = clamp(lvl, min_filter_level, max_filter_level)/6;
   int filter_step = filt_mid < 16 ? 4 : filt_mid / 4;
   // Sum squared error at each filter level
   int64_t ss_err[MAX_LOOP_FILTER + 1];
