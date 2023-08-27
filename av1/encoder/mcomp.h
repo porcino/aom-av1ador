@@ -182,14 +182,9 @@ void av1_init_motion_compensation_square(search_site_config *cfg, int stride,
 typedef void (*av1_init_search_site_config)(search_site_config *cfg, int stride,
                                             int level);
 
-/*! Array of function pointer used to set the motion search config. */
-static const av1_init_search_site_config
-    av1_init_motion_compensation[NUM_DISTINCT_SEARCH_METHODS] = {
-      av1_init_dsmotion_compensation,     av1_init_motion_compensation_nstep,
-      av1_init_motion_compensation_nstep, av1_init_dsmotion_compensation,
-      av1_init_motion_compensation_hex,   av1_init_motion_compensation_bigdia,
-      av1_init_motion_compensation_square
-    };
+/*! Array of function pointers used to set the motion search config. */
+extern const av1_init_search_site_config
+    av1_init_motion_compensation[NUM_DISTINCT_SEARCH_METHODS];
 
 // Array to inform which all search methods are having
 // same candidates and different in number of search steps.
@@ -267,10 +262,9 @@ void av1_set_mv_search_range(FullMvLimits *mv_limits, const MV *mv);
 
 int av1_init_search_range(int size);
 
-unsigned int av1_int_pro_motion_estimation(const struct AV1_COMP *cpi,
-                                           MACROBLOCK *x, BLOCK_SIZE bsize,
-                                           int mi_row, int mi_col,
-                                           const MV *ref_mv);
+unsigned int av1_int_pro_motion_estimation(
+    const struct AV1_COMP *cpi, MACROBLOCK *x, BLOCK_SIZE bsize, int mi_row,
+    int mi_col, const MV *ref_mv, unsigned int *y_sad_zero, int me_search_par);
 
 int av1_refining_search_8p_c(const FULLPEL_MOTION_SEARCH_PARAMS *ms_params,
                              const FULLPEL_MV start_mv, FULLPEL_MV *best_mv);

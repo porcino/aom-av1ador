@@ -139,7 +139,9 @@ if(CONFIG_AV1_HIGHBITDEPTH)
               "${AOM_ROOT}/aom_dsp/x86/highbd_loopfilter_avx2.c")
 
   list(APPEND AOM_DSP_COMMON_INTRIN_NEON
+              "${AOM_ROOT}/aom_dsp/arm/highbd_blend_a64_hmask_neon.c"
               "${AOM_ROOT}/aom_dsp/arm/highbd_blend_a64_mask_neon.c"
+              "${AOM_ROOT}/aom_dsp/arm/highbd_blend_a64_vmask_neon.c"
               "${AOM_ROOT}/aom_dsp/arm/highbd_convolve8_neon.c"
               "${AOM_ROOT}/aom_dsp/arm/highbd_intrapred_neon.c"
               "${AOM_ROOT}/aom_dsp/arm/highbd_loopfilter_neon.c")

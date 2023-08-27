@@ -15,9 +15,9 @@
 #include "av1/encoder/allintra_vis.h"
 #include "av1/encoder/bitstream.h"
 #include "av1/encoder/encodeframe.h"
+#include "av1/encoder/encodeframe_utils.h"
 #include "av1/encoder/encoder.h"
 #include "av1/encoder/encoder_alloc.h"
-#include "av1/encoder/encodeframe_utils.h"
 #include "av1/encoder/ethread.h"
 #if !CONFIG_REALTIME_ONLY
 #include "av1/encoder/firstpass.h"
@@ -265,6 +265,7 @@ static void row_mt_mem_alloc(AV1_COMP *cpi, int max_rows, int max_cols,
   enc_row_mt->allocated_cols = max_cols - 1;
   enc_row_mt->allocated_sb_rows = sb_rows;
   enc_row_mt->row_mt_exit = false;
+  enc_row_mt->firstpass_mt_exit = false;
 }
 
 void av1_row_mt_mem_dealloc(AV1_COMP *cpi) {
@@ -392,18 +393,68 @@ static AOM_INLINE void switch_tile_and_get_next_job(
 }
 
 #if !CONFIG_REALTIME_ONLY
+static void set_firstpass_encode_done(AV1_COMP *cpi) {
+  AV1_COMMON *const cm = &cpi->common;
+  AV1EncRowMultiThreadInfo *const enc_row_mt = &cpi->mt_info.enc_row_mt;
+  const int tile_cols = cm->tiles.cols;
+  const int tile_rows = cm->tiles.rows;
+  const BLOCK_SIZE fp_block_size = cpi->fp_block_size;
+  const int unit_height = mi_size_high[fp_block_size];
+
+  // In case of multithreading of firstpass encode, due to top-right
+  // dependency, the worker on a firstpass row waits for the completion of the
+  // firstpass processing of the top and top-right fp_blocks. Hence, in case a
+  // thread (main/worker) encounters an error, update the firstpass processing
+  // of every row in the frame to indicate that it is complete in order to avoid
+  // dependent workers waiting indefinitely.
+  for (int tile_row = 0; tile_row < tile_rows; ++tile_row) {
+    for (int tile_col = 0; tile_col < tile_cols; ++tile_col) {
+      TileDataEnc *const tile_data =
+          &cpi->tile_data[tile_row * tile_cols + tile_col];
+      TileInfo *tile = &tile_data->tile_info;
+      AV1EncRowMultiThreadSync *const row_mt_sync = &tile_data->row_mt_sync;
+      const int unit_cols_in_tile =
+          av1_get_unit_cols_in_tile(tile, fp_block_size);
+      for (int mi_row = tile->mi_row_start, unit_row_in_tile = 0;
+           mi_row < tile->mi_row_end;
+           mi_row += unit_height, unit_row_in_tile++) {
+        enc_row_mt->sync_write_ptr(row_mt_sync, unit_row_in_tile,
+                                   unit_cols_in_tile - 1, unit_cols_in_tile);
+      }
+    }
+  }
+}
+
 static int fp_enc_row_mt_worker_hook(void *arg1, void *unused) {
   EncWorkerData *const thread_data = (EncWorkerData *)arg1;
   AV1_COMP *const cpi = thread_data->cpi;
-  AV1_COMMON *const cm = &cpi->common;
   int thread_id = thread_data->thread_id;
   AV1EncRowMultiThreadInfo *const enc_row_mt = &cpi->mt_info.enc_row_mt;
-  int cur_tile_id = enc_row_mt->thread_id_to_tile_id[thread_id];
 #if CONFIG_MULTITHREAD
   pthread_mutex_t *enc_row_mt_mutex_ = enc_row_mt->mutex_;
 #endif
   (void)unused;
+  struct aom_internal_error_info *const error_info = &thread_data->error_info;
+  MACROBLOCKD *const xd = &thread_data->td->mb.e_mbd;
+  xd->error_info = error_info;
 
+  // The jmp_buf is valid only for the duration of the function that calls
+  // setjmp(). Therefore, this function must reset the 'setjmp' field to 0
+  // before it returns.
+  if (setjmp(error_info->jmp)) {
+    error_info->setjmp = 0;
+#if CONFIG_MULTITHREAD
+    pthread_mutex_lock(enc_row_mt_mutex_);
+    enc_row_mt->firstpass_mt_exit = true;
+    pthread_mutex_unlock(enc_row_mt_mutex_);
+#endif
+    set_firstpass_encode_done(cpi);
+    return 0;
+  }
+  error_info->setjmp = 1;
+
+  AV1_COMMON *const cm = &cpi->common;
+  int cur_tile_id = enc_row_mt->thread_id_to_tile_id[thread_id];
   assert(cur_tile_id != -1);
 
   const BLOCK_SIZE fp_block_size = cpi->fp_block_size;
@@ -414,8 +465,9 @@ static int fp_enc_row_mt_worker_hook(void *arg1, void *unused) {
 #if CONFIG_MULTITHREAD
     pthread_mutex_lock(enc_row_mt_mutex_);
 #endif
-    if (!get_next_job(&cpi->tile_data[cur_tile_id], &current_mi_row,
-                      unit_height)) {
+    bool firstpass_mt_exit = enc_row_mt->firstpass_mt_exit;
+    if (!firstpass_mt_exit && !get_next_job(&cpi->tile_data[cur_tile_id],
+                                            &current_mi_row, unit_height)) {
       // No jobs are available for the current tile. Query for the status of
       // other tiles and get the next job if available
       switch_tile_and_get_next_job(cm, cpi->tile_data, &cur_tile_id,
@@ -425,6 +477,9 @@ static int fp_enc_row_mt_worker_hook(void *arg1, void *unused) {
 #if CONFIG_MULTITHREAD
     pthread_mutex_unlock(enc_row_mt_mutex_);
 #endif
+    // When firstpass_mt_exit is set to true, other workers need not pursue any
+    // further jobs.
+    if (firstpass_mt_exit) return 1;
     if (end_of_frame == 1) break;
 
     TileDataEnc *const this_tile = &cpi->tile_data[cur_tile_id];
@@ -445,7 +500,7 @@ static int fp_enc_row_mt_worker_hook(void *arg1, void *unused) {
     pthread_mutex_unlock(enc_row_mt_mutex_);
 #endif
   }
-
+  error_info->setjmp = 0;
   return 1;
 }
 #endif
@@ -484,8 +539,8 @@ static void launch_loop_filter_rows(AV1_COMMON *cm, EncWorkerData *thread_data,
     av1_thread_loop_filter_rows(
         lf_data->frame_buffer, lf_data->cm, lf_data->planes, lf_data->xd,
         cur_job_info->mi_row, cur_job_info->plane, cur_job_info->dir,
-        lpf_opt_level, lf_sync, lf_data->params_buf, lf_data->tx_buf,
-        mib_size_log2);
+        lpf_opt_level, lf_sync, &thread_data->error_info, lf_data->params_buf,
+        lf_data->tx_buf, mib_size_log2);
   }
 }
 
@@ -529,6 +584,7 @@ static int enc_row_mt_worker_hook(void *arg1, void *unused) {
   (void)unused;
 
   struct aom_internal_error_info *const error_info = &thread_data->error_info;
+  AV1LfSync *const lf_sync = thread_data->lf_sync;
   MACROBLOCKD *const xd = &thread_data->td->mb.e_mbd;
   xd->error_info = error_info;
 
@@ -546,6 +602,16 @@ static int enc_row_mt_worker_hook(void *arg1, void *unused) {
     pthread_mutex_unlock(enc_row_mt_mutex_);
 #endif
     set_encoding_done(cpi);
+
+    if (cpi->mt_info.pipeline_lpf_mt_with_enc) {
+#if CONFIG_MULTITHREAD
+      pthread_mutex_lock(lf_sync->job_mutex);
+      lf_sync->lf_mt_exit = true;
+      pthread_mutex_unlock(lf_sync->job_mutex);
+#endif
+      av1_set_vert_loop_filter_done(&cpi->common, lf_sync,
+                                    cpi->common.seq_params->mib_size_log2);
+    }
     return 0;
   }
   error_info->setjmp = 1;
@@ -1247,27 +1313,6 @@ static AOM_INLINE void launch_fpmt_workers(AV1_PRIMARY *ppi) {
   }
 }
 
-// Synchronize level 1 workers.
-static AOM_INLINE void sync_fpmt_workers(AV1_PRIMARY *ppi) {
-  const AVxWorkerInterface *const winterface = aom_get_worker_interface();
-  int num_workers = ppi->p_mt_info.p_num_workers;
-  int had_error = 0;
-  // Points to error in the earliest display order frame in the parallel set.
-  const struct aom_internal_error_info *error;
-
-  // Encoding ends.
-  for (int i = num_workers - 1; i >= 0; i--) {
-    AVxWorker *const worker = ppi->p_mt_info.p_workers[i];
-    if (!winterface->sync(worker)) {
-      had_error = 1;
-      error = ppi->parallel_cpi[i]->common.error;
-    }
-  }
-
-  if (had_error)
-    aom_internal_error(&ppi->error, error->error_code, "%s", error->detail);
-}
-
 // Restore worker states after parallel encode.
 static AOM_INLINE void restore_workers_after_fpmt(AV1_PRIMARY *ppi,
                                                   int parallel_frame_count) {
@@ -1309,6 +1354,30 @@ static AOM_INLINE void restore_workers_after_fpmt(AV1_PRIMARY *ppi,
   }
 }
 
+// Synchronize level 1 workers.
+static AOM_INLINE void sync_fpmt_workers(AV1_PRIMARY *ppi,
+                                         int frames_in_parallel_set) {
+  const AVxWorkerInterface *const winterface = aom_get_worker_interface();
+  int num_workers = ppi->p_mt_info.p_num_workers;
+  int had_error = 0;
+  // Points to error in the earliest display order frame in the parallel set.
+  const struct aom_internal_error_info *error;
+
+  // Encoding ends.
+  for (int i = num_workers - 1; i >= 0; --i) {
+    AVxWorker *const worker = ppi->p_mt_info.p_workers[i];
+    if (!winterface->sync(worker)) {
+      had_error = 1;
+      error = ppi->parallel_cpi[i]->common.error;
+    }
+  }
+
+  restore_workers_after_fpmt(ppi, frames_in_parallel_set);
+
+  if (had_error)
+    aom_internal_error(&ppi->error, error->error_code, "%s", error->detail);
+}
+
 static int get_compressed_data_hook(void *arg1, void *arg2) {
   AV1_COMP *cpi = (AV1_COMP *)arg1;
   AV1_COMP_DATA *cpi_data = (AV1_COMP_DATA *)arg2;
@@ -1330,8 +1399,7 @@ int av1_compress_parallel_frames(AV1_PRIMARY *const ppi,
   prepare_fpmt_workers(ppi, first_cpi_data, get_compressed_data_hook,
                        frames_in_parallel_set);
   launch_fpmt_workers(ppi);
-  sync_fpmt_workers(ppi);
-  restore_workers_after_fpmt(ppi, frames_in_parallel_set);
+  sync_fpmt_workers(ppi, frames_in_parallel_set);
 
   // Release cpi->scaled_ref_buf corresponding to frames in the current parallel
   // encode set.
@@ -1542,20 +1610,11 @@ static AOM_INLINE void fp_prepare_enc_workers(AV1_COMP *cpi, AVxWorkerHook hook,
       thread_data->td = thread_data->original_td;
     }
 
-    // Before encoding a frame, copy the thread data from cpi.
     if (thread_data->td != &cpi->td) {
+      // Before encoding a frame, copy the thread data from cpi.
       thread_data->td->mb = cpi->td.mb;
-      // Keep this conditional expression in sync with the corresponding one
-      // in av1_fp_encode_tiles_row_mt().
-      if (cpi->sf.inter_sf.mv_cost_upd_level != INTERNAL_COST_UPD_OFF) {
-        CHECK_MEM_ERROR(cm, thread_data->td->mb.mv_costs,
-                        (MvCosts *)aom_malloc(sizeof(MvCosts)));
-        memcpy(thread_data->td->mb.mv_costs, cpi->td.mb.mv_costs,
-               sizeof(MvCosts));
-      }
+      av1_alloc_src_diff_buf(cm, &thread_data->td->mb);
     }
-
-    av1_alloc_mb_data(cpi, &thread_data->td->mb);
   }
 }
 #endif
@@ -1856,6 +1915,15 @@ void av1_encode_tiles_row_mt(AV1_COMP *cpi) {
 }
 
 #if !CONFIG_REALTIME_ONLY
+static void dealloc_thread_data_src_diff_buf(AV1_COMP *cpi, int num_workers) {
+  for (int i = num_workers - 1; i >= 0; --i) {
+    EncWorkerData *const thread_data = &cpi->mt_info.tile_thr_data[i];
+    if (thread_data->td != &cpi->td)
+      av1_dealloc_src_diff_buf(&thread_data->td->mb,
+                               av1_num_planes(&cpi->common));
+  }
+}
+
 void av1_fp_encode_tiles_row_mt(AV1_COMP *cpi) {
   AV1_COMMON *const cm = &cpi->common;
   MultiThreadInfo *const mt_info = &cpi->mt_info;
@@ -1918,18 +1986,7 @@ void av1_fp_encode_tiles_row_mt(AV1_COMP *cpi) {
   fp_prepare_enc_workers(cpi, fp_enc_row_mt_worker_hook, num_workers);
   launch_workers(&cpi->mt_info, num_workers);
   sync_enc_workers(&cpi->mt_info, cm, num_workers);
-  for (int i = num_workers - 1; i >= 0; i--) {
-    EncWorkerData *const thread_data = &cpi->mt_info.tile_thr_data[i];
-    if (thread_data->td != &cpi->td) {
-      // Keep this conditional expression in sync with the corresponding one
-      // in fp_prepare_enc_workers().
-      if (cpi->sf.inter_sf.mv_cost_upd_level != INTERNAL_COST_UPD_OFF) {
-        aom_free(thread_data->td->mb.mv_costs);
-      }
-      assert(!thread_data->td->mb.dv_costs);
-    }
-    av1_dealloc_mb_data(cm, &thread_data->td->mb);
-  }
+  dealloc_thread_data_src_diff_buf(cpi, num_workers);
 }
 
 void av1_tpl_row_mt_sync_read_dummy(AV1TplRowMultiThreadSync *tpl_mt_sync,
