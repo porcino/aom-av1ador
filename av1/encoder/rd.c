@@ -357,14 +357,14 @@ static const int rd_boost_factor[16] = { 64, 32, 32, 32, 24, 16, 12, 12,
                                          8,  8,  4,  4,  2,  2,  1,  0 };
 
 static const int rd_layer_depth_factor[7] = {
-  160, 160, 160, 160, 192, 208, 224
+  130, 193, 193, 193, 232, 268, 304
 };
 
 // Returns the default rd multiplier for inter frames for a given qindex.
 // The function here is a first pass estimate based on data from
 // a previous Vizer run
 static double def_inter_rd_multiplier(int qindex) {
-  return 2.8 + (0.0015 * (double)qindex);
+  return 2.7 + (0.0015 * (double)qindex);
 }
 
 // Returns the default rd multiplier for ARF/Golden Frames for a given qindex.
