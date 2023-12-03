@@ -369,7 +369,7 @@ static int get_twopass_worst_quality(AV1_COMP *cpi, const double av_frame_err,
 }
 
 #define INTRA_PART 0.005
-#define DEFAULT_DECAY_LIMIT 0.75
+#define DEFAULT_DECAY_LIMIT 0.5
 #define LOW_SR_DIFF_TRHESH 0.01
 #define NCOUNT_FRAME_II_THRESH 5.0
 #define LOW_CODED_ERR_PER_MB 0.01
@@ -659,8 +659,8 @@ static int get_projected_gfu_boost(const PRIMARY_RATE_CONTROL *p_rc,
   return projected_gfu_boost;
 }
 
-#define GF_MAX_BOOST 90.0
-#define GF_MIN_BOOST 50
+#define GF_MAX_BOOST 40.0
+#define GF_MIN_BOOST 25
 #define MIN_DECAY_FACTOR 0.01
 int av1_calc_arf_boost(const TWO_PASS *twopass,
                        const TWO_PASS_FRAME *twopass_frame,

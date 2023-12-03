@@ -1363,7 +1363,7 @@ void av1_set_mb_ssim_rdmult_scaling(AV1_COMP *cpi) {
 
       // Curve fitting with an exponential model on all 16x16 blocks from the
       // midres dataset.
-      var = 67.035434 * (1 - exp(-0.0021489 * var)) + 17.492222;
+      var = 66.035434 * (1 - 1.1*exp(-0.0021489 * var)) + 19.492222;
 
       // As per the above computation, var will be in the range of
       // [17.492222, 84.527656], assuming the data type is of infinite

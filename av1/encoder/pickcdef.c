@@ -826,7 +826,8 @@ void av1_cdef_search(AV1_COMP *cpi) {
   CDEF_CONTROL cdef_control = cpi->oxcf.tool_cfg.cdef_control;
 
   assert(cdef_control != CDEF_NONE);
-  if (cdef_control == CDEF_REFERENCE && cpi->ppi->rtc_ref.non_reference_frame) {
+   const int saltear = (cm->quant_params.base_qindex - 130) * 100 / 125;
+   if ((cdef_control == CDEF_REFERENCE && cpi->ppi->rtc_ref.non_reference_frame) || saltear <= 0) {
     CdefInfo *const cdef_info = &cm->cdef_info;
     cdef_info->nb_cdef_strengths = 1;
     cdef_info->cdef_bits = 0;
@@ -952,7 +953,8 @@ void av1_cdef_search(AV1_COMP *cpi) {
     }
   }
 
-  cdef_info->cdef_damping = damping;
+  cdef_info->cdef_damping = damping * (((cm->quant_params.base_qindex - 140) * 100 / 115) / 100);
+  if (cdef_info->cdef_damping < 1) cdef_info->cdef_damping = 1;
   // Deallocate CDEF search context buffers.
   av1_cdef_dealloc_data(cdef_search_ctx);
 }

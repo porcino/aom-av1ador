@@ -357,28 +357,28 @@ static const int rd_boost_factor[16] = { 64, 32, 32, 32, 24, 16, 12, 12,
                                          8,  8,  4,  4,  2,  2,  1,  0 };
 
 static const int rd_layer_depth_factor[7] = {
-  160, 160, 160, 160, 192, 208, 224
+  130, 193, 193, 193, 232, 268, 304
 };
 
 // Returns the default rd multiplier for inter frames for a given qindex.
 // The function here is a first pass estimate based on data from
 // a previous Vizer run
 static double def_inter_rd_multiplier(int qindex) {
-  return 3.2 + (0.0015 * (double)qindex);
+  return 2.7 + (0.0015 * (double)qindex);
 }
 
 // Returns the default rd multiplier for ARF/Golden Frames for a given qindex.
 // The function here is a first pass estimate based on data from
 // a previous Vizer run
 static double def_arf_rd_multiplier(int qindex) {
-  return 3.25 + (0.0015 * (double)qindex);
+  return 3.2 + (0.0015 * (double)qindex);
 }
 
 // Returns the default rd multiplier for key frames for a given qindex.
 // The function here is a first pass estimate based on data from
 // a previous Vizer run
 static double def_kf_rd_multiplier(int qindex) {
-  return 3.3 + (0.0015 * (double)qindex);
+  return 3.25 + (0.0015 * (double)qindex);
 }
 
 int av1_compute_rd_mult_based_on_qindex(aom_bit_depth_t bit_depth,
@@ -501,7 +501,7 @@ static int compute_rd_thresh_factor(int qindex, aom_bit_depth_t bit_depth) {
       return -1;
   }
   // TODO(debargha): Adjust the function below.
-  return AOMMAX((int)(pow(q, RD_THRESH_POW) * 5.12), 8);
+  return AOMMAX((int)(pow(q, RD_THRESH_POW) * 2.8), 8);
 }
 
 void av1_set_sad_per_bit(const AV1_COMP *cpi, int *sadperbit, int qindex) {
@@ -1146,6 +1146,7 @@ void av1_model_rd_curvfit(BLOCK_SIZE bsize, double sse_norm, double xqr,
   const int dcat = sse_norm_curvfit_model_cat_lookup(sse_norm);
   (void)x_end;
 
+  xqr /= 7.f;
   xqr = AOMMAX(xqr, x_start + x_step + epsilon);
   xqr = AOMMIN(xqr, x_end - x_step - epsilon);
   const double x = (xqr - x_start) / x_step;

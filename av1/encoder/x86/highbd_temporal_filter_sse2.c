@@ -266,7 +266,7 @@ void av1_highbd_apply_temporal_filter_sse2(
   // Adjust filtering based on q.
   // Larger q -> stronger filtering -> larger weight.
   // Smaller q -> weaker filtering -> smaller weight.
-  double q_decay = pow((double)q_factor / TF_Q_DECAY_THRESHOLD, 2);
+  double q_decay = pow((double)q_factor / TF_Q_DECAY_THRESHOLD, 3);
   q_decay = CLIP(q_decay, 1e-5, 1);
   if (q_factor >= TF_QINDEX_CUTOFF) {
     // Max q_factor is 255, therefore the upper bound of q_decay is 8.

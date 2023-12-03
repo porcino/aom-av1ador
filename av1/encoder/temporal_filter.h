@@ -50,7 +50,7 @@ static const double SQRT_PI_BY_2 = 1.25331413732;
 //    strength such that more detailed information can be preserved. Hence, when
 //    q is smaller than this threshold, we will adjust the filtering weight
 //    based on the q-value.
-#define TF_Q_DECAY_THRESHOLD 20
+#define TF_Q_DECAY_THRESHOLD 28
 // 3. Normalization factor used to normalize the motion search error. Since the
 //    motion search error can be large and uncontrollable, we will simply
 //    normalize it before using it to compute the filtering weight.

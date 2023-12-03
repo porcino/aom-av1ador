@@ -138,6 +138,34 @@ int av1_log_block_var(const AV1_COMP *cpi, MACROBLOCK *x, BLOCK_SIZE bs) {
   return (int)(var);
 }
 
+int av1_log_block_y(MACROBLOCK *x, BLOCK_SIZE bs, bool is_8bit) {
+  unsigned int sum, avg, num_pix, mayor;
+  int r, c;
+  const int bw = MI_SIZE * mi_size_wide[bs];
+  const int bh = MI_SIZE * mi_size_high[bs];
+
+  sum = num_pix = mayor = avg = 0;
+  
+  for (r = 0; r < bh; r += 4) {
+    for (c = 0; c < bw; c += 4) {
+      int may;
+      if (is_8bit)
+        may = *(x->plane[0].src.buf + r * x->plane[0].src.stride + c);
+      else {
+        may = *((uint8_t *)CONVERT_TO_SHORTPTR(x->plane[0].src.buf) + r * x->plane[0].src.stride + c);
+        may = (may * 54 / 100) - 20;
+        if (may < 0) may = 0;
+      }
+      if (may > (short)mayor) mayor = may;
+      if (may == 0) may = 115;
+      sum += may;
+      num_pix++;
+    }
+  }
+  if (num_pix != 0) avg = ((sum / num_pix) + mayor) / 2;
+  return avg;
+}
+
 int av1_log_block_avg(const AV1_COMP *cpi, MACROBLOCK *x, BLOCK_SIZE bs,
                       int mi_row, int mi_col) {
   // This functions returns the block average of luma block
