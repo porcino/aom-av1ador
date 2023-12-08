@@ -538,11 +538,17 @@ static AOM_INLINE void encode_nonrd_sb(AV1_COMP *cpi, ThreadData *td,
   }
 #endif
   // Set the partition
-  if (sf->part_sf.partition_search_type == FIXED_PARTITION || seg_skip) {
+  if (sf->part_sf.partition_search_type == FIXED_PARTITION || seg_skip ||
+      (sf->rt_sf.use_fast_fixed_part &&
+       x->content_state_sb.source_sad_nonrd < kMedSad)) {
     // set a fixed-size partition
     av1_set_offsets(cpi, tile_info, x, mi_row, mi_col, sb_size);
-    const BLOCK_SIZE bsize =
-        seg_skip ? sb_size : sf->part_sf.fixed_partition_size;
+    BLOCK_SIZE bsize_select = sf->part_sf.fixed_partition_size;
+    if (sf->rt_sf.use_fast_fixed_part &&
+        x->content_state_sb.source_sad_nonrd < kLowSad) {
+      bsize_select = BLOCK_64X64;
+    }
+    const BLOCK_SIZE bsize = seg_skip ? sb_size : bsize_select;
     av1_set_fixed_partitioning(cpi, tile_info, mi, mi_row, mi_col, bsize);
   } else if (sf->part_sf.partition_search_type == VAR_BASED_PARTITION) {
     // set a variance-based partition
@@ -1572,20 +1578,12 @@ static int check_skip_mode_enabled(AV1_COMP *const cpi) {
   // High Latency: Turn off skip mode if all refs are fwd.
   if (cpi->all_one_sided_refs && cpi->oxcf.gf_cfg.lag_in_frames > 0) return 0;
 
-  static const int flag_list[REF_FRAMES] = { 0,
-                                             AOM_LAST_FLAG,
-                                             AOM_LAST2_FLAG,
-                                             AOM_LAST3_FLAG,
-                                             AOM_GOLD_FLAG,
-                                             AOM_BWD_FLAG,
-                                             AOM_ALT2_FLAG,
-                                             AOM_ALT_FLAG };
   const int ref_frame[2] = {
     cm->current_frame.skip_mode_info.ref_frame_idx_0 + LAST_FRAME,
     cm->current_frame.skip_mode_info.ref_frame_idx_1 + LAST_FRAME
   };
-  if (!(cpi->ref_frame_flags & flag_list[ref_frame[0]]) ||
-      !(cpi->ref_frame_flags & flag_list[ref_frame[1]]))
+  if (!(cpi->ref_frame_flags & av1_ref_frame_flag_list[ref_frame[0]]) ||
+      !(cpi->ref_frame_flags & av1_ref_frame_flag_list[ref_frame[1]]))
     return 0;
 
   return 1;

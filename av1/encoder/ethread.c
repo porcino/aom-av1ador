@@ -1645,13 +1645,10 @@ static AOM_INLINE void fp_prepare_enc_workers(AV1_COMP *cpi, AVxWorkerHook hook,
       thread_data->td = &cpi->td;
     } else {
       thread_data->td = thread_data->original_td;
-    }
-
-    if (thread_data->td != &cpi->td) {
       // Before encoding a frame, copy the thread data from cpi.
       thread_data->td->mb = cpi->td.mb;
-      av1_alloc_src_diff_buf(cm, &thread_data->td->mb);
     }
+    av1_alloc_src_diff_buf(cm, &thread_data->td->mb);
   }
 }
 #endif
@@ -2082,7 +2079,13 @@ void av1_tpl_row_mt_sync_write(AV1TplRowMultiThreadSync *tpl_row_mt_sync, int r,
   if (sig) {
     pthread_mutex_lock(&tpl_row_mt_sync->mutex_[r]);
 
-    tpl_row_mt_sync->num_finished_cols[r] = cur;
+    // When a thread encounters an error, num_finished_cols[r] is set to maximum
+    // column number. In this case, the AOMMAX operation here ensures that
+    // num_finished_cols[r] is not overwritten with a smaller value thus
+    // preventing the infinite waiting of threads in the relevant sync_read()
+    // function.
+    tpl_row_mt_sync->num_finished_cols[r] =
+        AOMMAX(tpl_row_mt_sync->num_finished_cols[r], cur);
 
     pthread_cond_signal(&tpl_row_mt_sync->cond_[r]);
     pthread_mutex_unlock(&tpl_row_mt_sync->mutex_[r]);
