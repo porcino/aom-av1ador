@@ -355,11 +355,13 @@ list(APPEND AOM_AV1_ENCODER_INTRIN_NEON
             "${AOM_ROOT}/av1/encoder/arm/neon/av1_fwd_txfm2d_neon.c"
             "${AOM_ROOT}/av1/encoder/arm/neon/av1_highbd_quantize_neon.c"
             "${AOM_ROOT}/av1/encoder/arm/neon/av1_k_means_neon.c"
+            "${AOM_ROOT}/av1/encoder/arm/neon/cnn_neon.c"
             "${AOM_ROOT}/av1/encoder/arm/neon/encodetxb_neon.c"
             "${AOM_ROOT}/av1/encoder/arm/neon/highbd_fwd_txfm_neon.c"
             "${AOM_ROOT}/av1/encoder/arm/neon/hybrid_fwd_txfm_neon.c"
             "${AOM_ROOT}/av1/encoder/arm/neon/ml_neon.c"
             "${AOM_ROOT}/av1/encoder/arm/neon/pickrst_neon.c"
+            "${AOM_ROOT}/av1/encoder/arm/neon/pickrst_neon.h"
             "${AOM_ROOT}/av1/encoder/arm/neon/quantize_neon.c"
             "${AOM_ROOT}/av1/encoder/arm/neon/rdopt_neon.c"
             "${AOM_ROOT}/av1/encoder/arm/neon/reconinter_enc_neon.c"
@@ -368,6 +370,9 @@ list(APPEND AOM_AV1_ENCODER_INTRIN_NEON
 
 list(APPEND AOM_AV1_ENCODER_INTRIN_NEON_DOTPROD
             "${AOM_ROOT}/av1/encoder/arm/neon/temporal_filter_neon_dotprod.c")
+
+list(APPEND AOM_AV1_ENCODER_INTRIN_SVE
+            "${AOM_ROOT}/av1/encoder/arm/neon/av1_error_sve.c")
 
 list(APPEND AOM_AV1_ENCODER_INTRIN_ARM_CRC32
             "${AOM_ROOT}/av1/encoder/arm/crc32/hash_arm_crc32.c")
@@ -510,6 +515,9 @@ if(CONFIG_REALTIME_ONLY)
   list(REMOVE_ITEM AOM_AV1_ENCODER_INTRIN_AVX2
                    "${AOM_ROOT}/av1/encoder/x86/pickrst_avx2.c"
                    "${AOM_ROOT}/av1/encoder/x86/cnn_avx2.c")
+
+  list(REMOVE_ITEM AOM_AV1_ENCODER_INTRIN_NEON
+                   "${AOM_ROOT}/av1/encoder/arm/neon/cnn_neon.c")
 
   list(REMOVE_ITEM AOM_AV1_ENCODER_SOURCES
                    "${AOM_ROOT}/av1/encoder/cnn.c"
@@ -688,6 +696,10 @@ function(setup_av1_targets)
   if(HAVE_SVE)
     add_intrinsics_object_library("${AOM_SVE_FLAG}" "sve" "aom_av1_common"
                                   "AOM_AV1_COMMON_INTRIN_SVE")
+    if(CONFIG_AV1_ENCODER)
+      add_intrinsics_object_library("${AOM_SVE_FLAG}" "sve" "aom_av1_encoder"
+                                    "AOM_AV1_ENCODER_INTRIN_SVE")
+    endif()
   endif()
 
   if(HAVE_VSX)

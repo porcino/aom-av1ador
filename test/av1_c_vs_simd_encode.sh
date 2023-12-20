@@ -303,7 +303,8 @@ av1_enc_build() {
            -DCMAKE_BUILD_TYPE=Release \
            -DENABLE_CCACHE=1 \
            '-DCMAKE_C_FLAGS_RELEASE=-O3 -g' \
-           '-DCMAKE_CXX_FLAGS_RELEASE=-O3 -g'"
+           '-DCMAKE_CXX_FLAGS_RELEASE=-O3 -g' \
+           -DENABLE_DOCS=0 -DENABLE_TESTS=0 -DENABLE_TOOLS=0"
 
   for preset in $PRESETS; do
     echo "Building target[${preset} encoding]: ${target}"
@@ -315,8 +316,16 @@ av1_enc_build() {
       elog "Invalid preset"
       return 1
     fi
-    eval "$cmake_command" "${cmake_common_args}" "${cmake_extra_args}" ${devnull}
-    eval make -j$(nproc) ${devnull}
+    if ! eval "$cmake_command" "${cmake_common_args}" "${cmake_extra_args}" \
+      ${devnull}; then
+      elog "cmake failure"
+      return 1
+    fi
+    if ! eval make -j$(nproc) aomenc ${devnull}; then
+      elog "build failure"
+      return 1
+    fi
+
     mv aomenc aomenc_${preset}
   done
   echo "Done building target: ${target}"
@@ -376,9 +385,7 @@ av1_enc_test() {
       elif [ "${arch}" = "x86" ]; then
         local test_clips="${LOWBD_CIF_CLIP} ${HIGHBD_CLIP}"
       elif [ "${arch}" = "arm64" ]; then
-        # TODO(BUG=aomedia:3474): Enable testing of high bit-depth clips after
-        # fixing C vs SIMD mismatches.
-        local test_clips="${LOWBD_CIF_CLIP}"
+        local test_clips="${LOWBD_CIF_CLIP} ${HIGHBD_CLIP}"
       fi
     elif [ "${preset}" = "rt" ]; then
       if [ "${cpu}" -lt 8 ]; then
@@ -426,7 +433,9 @@ av1_test_generic() {
   fi
 
   echo "Build for: Generic ${arch}"
-  av1_enc_build "${target}" "${cmake_command}"
+  if ! av1_enc_build "${target}" "${cmake_command}"; then
+    return 1
+  fi
 
   for preset in $PRESETS; do
     local encoder="$(av1_enc_tool_path "${target}" "${preset}")"
@@ -473,7 +482,9 @@ av1_test_x86() {
   local x86_isa_variants="avx2 sse4_1 sse2"
 
   echo "Build for x86: ${target}"
-  av1_enc_build "${target}" "${cmake_command}"
+  if ! av1_enc_build "${target}" "${cmake_command}"; then
+    return 1
+  fi
 
   for preset in $PRESETS; do
     local encoder="$(av1_enc_tool_path "${target}" "${preset}")"
@@ -500,15 +511,11 @@ av1_test_arm() {
         -DCMAKE_TOOLCHAIN_FILE=$LIBAOM_SOURCE_DIR/build/cmake/toolchains/${target}.cmake \
         -DCMAKE_C_FLAGS=-Wno-maybe-uninitialized"
   echo "Build for arm64: ${target}"
-  av1_enc_build "${target}" "${cmake_command}"
+  if ! av1_enc_build "${target}" "${cmake_command}"; then
+    return 1
+  fi
 
   for preset in $PRESETS; do
-    # Enable armv8 test for real-time only
-    # TODO(BUG=aomedia:3486, BUG=aomedia:3474): Enable testing for 'good' preset
-    # after fixing C vs NEON mismatches.
-    if [ "${preset}" = "good" ]; then
-      continue
-    fi
     local encoder="$(av1_enc_tool_path "${target}" "${preset}")"
     if ! av1_enc_test "qemu-aarch64 -L /usr/aarch64-linux-gnu ${encoder}" "${arch}" "${target}" "${preset}"; then
       # Found a mismatch

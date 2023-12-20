@@ -318,10 +318,10 @@ if (aom_config("CONFIG_AV1_ENCODER") eq "yes") {
   # the transform coefficients are held in 32-bit
   # values, so the assembler code for  av1_block_error can no longer be used.
   add_proto qw/int64_t av1_block_error/, "const tran_low_t *coeff, const tran_low_t *dqcoeff, intptr_t block_size, int64_t *ssz";
-  specialize qw/av1_block_error sse2 avx2 neon/;
+  specialize qw/av1_block_error sse2 avx2 neon sve/;
 
   add_proto qw/int64_t av1_block_error_lp/, "const int16_t *coeff, const int16_t *dqcoeff, intptr_t block_size";
-  specialize qw/av1_block_error_lp sse2 avx2 neon/;
+  specialize qw/av1_block_error_lp sse2 avx2 neon sve/;
 
   add_proto qw/void av1_quantize_fp/, "const tran_low_t *coeff_ptr, intptr_t n_coeffs, const int16_t *zbin_ptr, const int16_t *round_ptr, const int16_t *quant_ptr, const int16_t *quant_shift_ptr, tran_low_t *qcoeff_ptr, tran_low_t *dqcoeff_ptr, const int16_t *dequant_ptr, uint16_t *eob_ptr, const int16_t *scan, const int16_t *iscan";
   specialize qw/av1_quantize_fp sse2 avx2 neon/;
@@ -484,6 +484,7 @@ if (aom_config("CONFIG_AV1_ENCODER") eq "yes") {
     if (aom_config("CONFIG_EXCLUDE_SIMD_MISMATCH") ne "yes") {
       specialize qw/av1_cnn_convolve_no_maxpool_padding_valid avx2/;
     }
+    specialize qw/av1_cnn_convolve_no_maxpool_padding_valid neon/;
     add_proto qw/void av1_cnn_deconvolve/, "const float **input, int in_width, int in_height, int in_stride, const CNN_LAYER_CONFIG *layer_config, float **output, int out_stride";
     add_proto qw/void av1_cnn_batchnorm/, "float **image, int channels, int width, int height, int stride, const float *gamma, const float *beta, const float *mean, const float *std";
   }
