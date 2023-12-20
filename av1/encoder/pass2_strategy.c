@@ -659,8 +659,8 @@ static int get_projected_gfu_boost(const PRIMARY_RATE_CONTROL *p_rc,
   return projected_gfu_boost;
 }
 
-#define GF_MAX_BOOST 40.0
-#define GF_MIN_BOOST 25
+#define GF_MAX_BOOST 35.0
+#define GF_MIN_BOOST 20
 #define MIN_DECAY_FACTOR 0.01
 int av1_calc_arf_boost(const TWO_PASS *twopass,
                        const TWO_PASS_FRAME *twopass_frame,
