@@ -357,7 +357,7 @@ static const int rd_boost_factor[16] = { 64, 32, 32, 32, 24, 16, 12, 12,
                                          8,  8,  4,  4,  2,  2,  1,  0 };
 
 static const int rd_layer_depth_factor[7] = {
-  130, 193, 193, 193, 232, 268, 304
+  144, 192, 192, 192, 176, 160, 144
 };
 
 // Returns the default rd multiplier for inter frames for a given qindex.
