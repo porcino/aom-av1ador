@@ -12,11 +12,14 @@
 #include <assert.h>
 #include <stdbool.h>
 
+#include "aom_util/aom_pthread.h"
+
 #include "av1/common/warped_motion.h"
 #include "av1/common/thread_common.h"
 
 #include "av1/encoder/allintra_vis.h"
 #include "av1/encoder/bitstream.h"
+#include "av1/encoder/enc_enums.h"
 #include "av1/encoder/encodeframe.h"
 #include "av1/encoder/encodeframe_utils.h"
 #include "av1/encoder/encoder.h"
@@ -253,7 +256,6 @@ static void row_mt_mem_alloc(AV1_COMP *cpi, int max_rows, int max_cols,
 
       row_mt_sync_mem_alloc(&this_tile->row_mt_sync, cm, max_rows);
 
-      this_tile->row_ctx = NULL;
       if (alloc_row_ctx) {
         assert(max_cols > 0);
         const int num_row_ctx = AOMMAX(1, (max_cols - 1));
@@ -268,8 +270,6 @@ static void row_mt_mem_alloc(AV1_COMP *cpi, int max_rows, int max_cols,
       cm, enc_row_mt->num_tile_cols_done,
       aom_malloc(sizeof(*enc_row_mt->num_tile_cols_done) * sb_rows));
 
-  enc_row_mt->allocated_tile_cols = tile_cols;
-  enc_row_mt->allocated_tile_rows = tile_rows;
   enc_row_mt->allocated_rows = max_rows;
   enc_row_mt->allocated_cols = max_cols - 1;
   enc_row_mt->allocated_sb_rows = sb_rows;
@@ -289,15 +289,16 @@ void av1_row_mt_mem_dealloc(AV1_COMP *cpi) {
 
       av1_row_mt_sync_mem_dealloc(&this_tile->row_mt_sync);
 
-      if (cpi->oxcf.algo_cfg.cdf_update_mode) aom_free(this_tile->row_ctx);
+      if (cpi->oxcf.algo_cfg.cdf_update_mode) {
+        aom_free(this_tile->row_ctx);
+        this_tile->row_ctx = NULL;
+      }
     }
   }
   aom_free(enc_row_mt->num_tile_cols_done);
   enc_row_mt->num_tile_cols_done = NULL;
   enc_row_mt->allocated_rows = 0;
   enc_row_mt->allocated_cols = 0;
-  enc_row_mt->allocated_tile_cols = 0;
-  enc_row_mt->allocated_tile_rows = 0;
   enc_row_mt->allocated_sb_rows = 0;
 }
 
@@ -841,6 +842,11 @@ void av1_init_mt_sync(AV1_COMP *cpi, int is_first_pass) {
   AV1_COMMON *const cm = &cpi->common;
   MultiThreadInfo *const mt_info = &cpi->mt_info;
 
+  if (setjmp(cm->error->jmp)) {
+    cm->error->setjmp = 0;
+    aom_internal_error_copy(&cpi->ppi->error, cm->error);
+  }
+  cm->error->setjmp = 1;
   // Initialize enc row MT object.
   if (is_first_pass || cpi->oxcf.row_mt == 1) {
     AV1EncRowMultiThreadInfo *enc_row_mt = &mt_info->enc_row_mt;
@@ -928,6 +934,7 @@ void av1_init_mt_sync(AV1_COMP *cpi, int is_first_pass) {
       if (pack_bs_sync->mutex_) pthread_mutex_init(pack_bs_sync->mutex_, NULL);
     }
   }
+  cm->error->setjmp = 0;
 }
 #endif  // CONFIG_MULTITHREAD
 
@@ -983,7 +990,10 @@ void av1_init_tile_thread_data(AV1_PRIMARY *ppi, int is_first_pass) {
 
       if (!is_first_pass && i < num_enc_workers) {
         // Set up sms_tree.
-        av1_setup_sms_tree(ppi->cpi, td);
+        if (av1_setup_sms_tree(ppi->cpi, td)) {
+          aom_internal_error(&ppi->error, AOM_CODEC_MEM_ERROR,
+                             "Failed to allocate SMS tree");
+        }
 
         for (int x = 0; x < 2; x++)
           for (int y = 0; y < 2; y++)
@@ -1114,7 +1124,8 @@ void av1_terminate_workers(AV1_PRIMARY *ppi) {
 
 // This function returns 1 if frame parallel encode is supported for
 // the current configuration. Returns 0 otherwise.
-static AOM_INLINE int is_fpmt_config(AV1_PRIMARY *ppi, AV1EncoderConfig *oxcf) {
+static AOM_INLINE int is_fpmt_config(const AV1_PRIMARY *ppi,
+                                     const AV1EncoderConfig *oxcf) {
   // FPMT is enabled for AOM_Q and AOM_VBR.
   // TODO(Tarun): Test and enable resize config.
   if (oxcf->rc_cfg.mode == AOM_CBR || oxcf->rc_cfg.mode == AOM_CQ) {
@@ -1152,7 +1163,7 @@ static AOM_INLINE int is_fpmt_config(AV1_PRIMARY *ppi, AV1EncoderConfig *oxcf) {
 }
 
 int av1_check_fpmt_config(AV1_PRIMARY *const ppi,
-                          AV1EncoderConfig *const oxcf) {
+                          const AV1EncoderConfig *const oxcf) {
   if (is_fpmt_config(ppi, oxcf)) return 1;
   // Reset frame parallel configuration for unsupported config
   if (ppi->num_fp_contexts > 1) {
@@ -1249,6 +1260,9 @@ static AOM_INLINE int compute_num_workers_per_frame(
   return workers_per_frame;
 }
 
+static AOM_INLINE void restore_workers_after_fpmt(
+    AV1_PRIMARY *ppi, int parallel_frame_count, int num_fpmt_workers_prepared);
+
 // Prepare level 1 workers. This function is only called for
 // parallel_frame_count > 1. This function populates the mt_info structure of
 // frame level contexts appropriately by dividing the total number of available
@@ -1264,17 +1278,30 @@ static AOM_INLINE void prepare_fpmt_workers(AV1_PRIMARY *ppi,
   PrimaryMultiThreadInfo *const p_mt_info = &ppi->p_mt_info;
   int num_workers = p_mt_info->num_workers;
 
-  int frame_idx = 0;
-  int i = 0;
+  volatile int frame_idx = 0;
+  volatile int i = 0;
   while (i < num_workers) {
     // Assign level 1 worker
     AVxWorker *frame_worker = p_mt_info->p_workers[frame_idx] =
         &p_mt_info->workers[i];
     AV1_COMP *cur_cpi = ppi->parallel_cpi[frame_idx];
     MultiThreadInfo *mt_info = &cur_cpi->mt_info;
-    AV1_COMMON *const cm = &cur_cpi->common;
-    const int num_planes = av1_num_planes(cm);
+    // This 'aom_internal_error_info' pointer is not derived from the local
+    // pointer ('AV1_COMMON *const cm') to silence the compiler warning
+    // "variable 'cm' might be clobbered by 'longjmp' or 'vfork' [-Wclobbered]".
+    struct aom_internal_error_info *const error = cur_cpi->common.error;
 
+    // The jmp_buf is valid only within the scope of the function that calls
+    // setjmp(). Therefore, this function must reset the 'setjmp' field to 0
+    // before it returns.
+    if (setjmp(error->jmp)) {
+      error->setjmp = 0;
+      restore_workers_after_fpmt(ppi, parallel_frame_count, i);
+      aom_internal_error_copy(&ppi->error, error);
+    }
+    error->setjmp = 1;
+
+    AV1_COMMON *const cm = &cur_cpi->common;
     // Assign start of level 2 worker pool
     mt_info->workers = &p_mt_info->workers[i];
     mt_info->tile_thr_data = &p_mt_info->tile_thr_data[i];
@@ -1283,13 +1310,14 @@ static AOM_INLINE void prepare_fpmt_workers(AV1_PRIMARY *ppi,
         num_workers - i, parallel_frame_count - frame_idx);
     for (int j = MOD_FP; j < NUM_MT_MODULES; j++) {
       mt_info->num_mod_workers[j] =
-          AOMMIN(mt_info->num_workers, ppi->p_mt_info.num_mod_workers[j]);
+          AOMMIN(mt_info->num_workers, p_mt_info->num_mod_workers[j]);
     }
-    if (ppi->p_mt_info.cdef_worker != NULL) {
-      mt_info->cdef_worker = &ppi->p_mt_info.cdef_worker[i];
+    if (p_mt_info->cdef_worker != NULL) {
+      mt_info->cdef_worker = &p_mt_info->cdef_worker[i];
 
       // Back up the original cdef_worker pointers.
       mt_info->restore_state_buf.cdef_srcbuf = mt_info->cdef_worker->srcbuf;
+      const int num_planes = av1_num_planes(cm);
       for (int plane = 0; plane < num_planes; plane++)
         mt_info->restore_state_buf.cdef_colbuf[plane] =
             mt_info->cdef_worker->colbuf[plane];
@@ -1310,6 +1338,8 @@ static AOM_INLINE void prepare_fpmt_workers(AV1_PRIMARY *ppi,
     }
 #endif
 
+    i += mt_info->num_workers;
+
     // At this stage, the thread specific CDEF buffers for the current frame's
     // 'common' and 'cdef_sync' only need to be allocated. 'cdef_worker' has
     // already been allocated across parallel frames.
@@ -1322,7 +1352,7 @@ static AOM_INLINE void prepare_fpmt_workers(AV1_PRIMARY *ppi,
                               ? first_cpi_data
                               : &ppi->parallel_frames_data[frame_idx - 1];
     frame_idx++;
-    i += mt_info->num_workers;
+    error->setjmp = 0;
   }
   p_mt_info->p_num_workers = parallel_frame_count;
 }
@@ -1342,25 +1372,24 @@ static AOM_INLINE void launch_fpmt_workers(AV1_PRIMARY *ppi) {
 }
 
 // Restore worker states after parallel encode.
-static AOM_INLINE void restore_workers_after_fpmt(AV1_PRIMARY *ppi,
-                                                  int parallel_frame_count) {
+static AOM_INLINE void restore_workers_after_fpmt(
+    AV1_PRIMARY *ppi, int parallel_frame_count, int num_fpmt_workers_prepared) {
   assert(parallel_frame_count <= ppi->num_fp_contexts &&
          parallel_frame_count > 1);
   (void)parallel_frame_count;
 
   PrimaryMultiThreadInfo *const p_mt_info = &ppi->p_mt_info;
-  int num_workers = p_mt_info->num_workers;
 
   int frame_idx = 0;
   int i = 0;
-  while (i < num_workers) {
+  while (i < num_fpmt_workers_prepared) {
     AV1_COMP *cur_cpi = ppi->parallel_cpi[frame_idx];
     MultiThreadInfo *mt_info = &cur_cpi->mt_info;
     const AV1_COMMON *const cm = &cur_cpi->common;
     const int num_planes = av1_num_planes(cm);
 
     // Restore the original cdef_worker pointers.
-    if (ppi->p_mt_info.cdef_worker != NULL) {
+    if (p_mt_info->cdef_worker != NULL) {
       mt_info->cdef_worker->srcbuf = mt_info->restore_state_buf.cdef_srcbuf;
       for (int plane = 0; plane < num_planes; plane++)
         mt_info->cdef_worker->colbuf[plane] =
@@ -1390,7 +1419,7 @@ static AOM_INLINE void sync_fpmt_workers(AV1_PRIMARY *ppi,
   int num_workers = ppi->p_mt_info.p_num_workers;
   int had_error = 0;
   // Points to error in the earliest display order frame in the parallel set.
-  const struct aom_internal_error_info *error;
+  const struct aom_internal_error_info *error = NULL;
 
   // Encoding ends.
   for (int i = num_workers - 1; i >= 0; --i) {
@@ -1401,10 +1430,10 @@ static AOM_INLINE void sync_fpmt_workers(AV1_PRIMARY *ppi,
     }
   }
 
-  restore_workers_after_fpmt(ppi, frames_in_parallel_set);
+  restore_workers_after_fpmt(ppi, frames_in_parallel_set,
+                             ppi->p_mt_info.num_workers);
 
-  if (had_error)
-    aom_internal_error(&ppi->error, error->error_code, "%s", error->detail);
+  if (had_error) aom_internal_error_copy(&ppi->error, error);
 }
 
 static int get_compressed_data_hook(void *arg1, void *arg2) {
@@ -1418,8 +1447,8 @@ static int get_compressed_data_hook(void *arg1, void *arg2) {
 
 // This function encodes the raw frame data for each frame in parallel encode
 // set, and outputs the frame bit stream to the designated buffers.
-int av1_compress_parallel_frames(AV1_PRIMARY *const ppi,
-                                 AV1_COMP_DATA *const first_cpi_data) {
+void av1_compress_parallel_frames(AV1_PRIMARY *const ppi,
+                                  AV1_COMP_DATA *const first_cpi_data) {
   // Bitmask for the frame buffers referenced by cpi->scaled_ref_buf
   // corresponding to frames in the current parallel encode set.
   int ref_buffers_used_map = 0;
@@ -1437,7 +1466,6 @@ int av1_compress_parallel_frames(AV1_PRIMARY *const ppi,
   }
   av1_decrement_ref_counts_fpmt(ppi->cpi->common.buffer_pool,
                                 ref_buffers_used_map);
-  return AOM_CODEC_OK;
 }
 
 static AOM_INLINE void launch_workers(MultiThreadInfo *const mt_info,
@@ -1474,9 +1502,7 @@ static AOM_INLINE void sync_enc_workers(MultiThreadInfo *const mt_info,
     }
   }
 
-  if (had_error)
-    aom_internal_error(cm->error, error_info.error_code, "%s",
-                       error_info.detail);
+  if (had_error) aom_internal_error_copy(cm->error, &error_info);
 
   // Restore xd->error_info of the main thread back to cm->error so that the
   // multithreaded code, when executed using a single thread, has a valid
@@ -2205,8 +2231,8 @@ void av1_tpl_dealloc(AV1TplRowMultiThreadSync *tpl_sync) {
 }
 
 // Allocate memory for tpl row synchronization.
-void av1_tpl_alloc(AV1TplRowMultiThreadSync *tpl_sync, AV1_COMMON *cm,
-                   int mb_rows) {
+static void av1_tpl_alloc(AV1TplRowMultiThreadSync *tpl_sync, AV1_COMMON *cm,
+                          int mb_rows) {
   tpl_sync->rows = mb_rows;
 #if CONFIG_MULTITHREAD
   {
@@ -2496,7 +2522,7 @@ void av1_tf_do_filtering_mt(AV1_COMP *cpi) {
 static AOM_INLINE int get_next_gm_job(AV1_COMP *cpi, int *frame_idx,
                                       int cur_dir) {
   GlobalMotionInfo *gm_info = &cpi->gm_info;
-  JobInfo *job_info = &cpi->mt_info.gm_sync.job_info;
+  GlobalMotionJobInfo *job_info = &cpi->mt_info.gm_sync.job_info;
 
   int total_refs = gm_info->num_ref_frames[cur_dir];
   int8_t cur_frame_to_process = job_info->next_frame_to_process[cur_dir];
@@ -2527,7 +2553,7 @@ static int gm_mt_worker_hook(void *arg1, void *unused) {
   AV1_COMP *cpi = thread_data->cpi;
   GlobalMotionInfo *gm_info = &cpi->gm_info;
   AV1GlobalMotionSync *gm_sync = &cpi->mt_info.gm_sync;
-  JobInfo *job_info = &gm_sync->job_info;
+  GlobalMotionJobInfo *job_info = &gm_sync->job_info;
   int thread_id = thread_data->thread_id;
   GlobalMotionData *gm_thread_data = &thread_data->td->gm_data;
 #if CONFIG_MULTITHREAD
@@ -2665,7 +2691,7 @@ static AOM_INLINE void gm_dealloc_thread_data(AV1_COMP *cpi, int num_workers) {
 
 // Implements multi-threading for global motion.
 void av1_global_motion_estimation_mt(AV1_COMP *cpi) {
-  JobInfo *job_info = &cpi->mt_info.gm_sync.job_info;
+  GlobalMotionJobInfo *job_info = &cpi->mt_info.gm_sync.job_info;
 
   av1_zero(*job_info);
 

@@ -58,9 +58,9 @@ endif()
 # passed to libtool.
 #
 # We set SO_FILE_VERSION = [c-a].a.r
-set(LT_CURRENT 11)
+set(LT_CURRENT 12)
 set(LT_REVISION 0)
-set(LT_AGE 8)
+set(LT_AGE 9)
 math(EXPR SO_VERSION "${LT_CURRENT} - ${LT_AGE}")
 set(SO_FILE_VERSION "${SO_VERSION}.${LT_AGE}.${LT_REVISION}")
 unset(LT_CURRENT)
@@ -323,11 +323,28 @@ if(NOT WIN32 AND NOT APPLE)
   endif()
 endif()
 
-if(CONFIG_AV1_ENCODER AND NOT BUILD_SHARED_LIBS)
+if(CONFIG_AV1_ENCODER)
   list(APPEND AOM_AV1_RC_SOURCES "${AOM_ROOT}/av1/ratectrl_rtc.h"
               "${AOM_ROOT}/av1/ratectrl_rtc.cc")
   add_library(aom_av1_rc ${AOM_AV1_RC_SOURCES})
-  target_link_libraries(aom_av1_rc ${AOM_LIB_LINK_TYPE} aom)
+  # aom_av1_rc calls libaom's internal functions, so it must be linked with the
+  # libaom static library.
+  if(BUILD_SHARED_LIBS)
+    target_link_libraries(aom_av1_rc ${AOM_LIB_LINK_TYPE} aom_static)
+  else()
+    target_link_libraries(aom_av1_rc ${AOM_LIB_LINK_TYPE} aom)
+  endif()
+  if(BUILD_SHARED_LIBS)
+    # On Windows, global symbols are not exported from a DLL by default. Enable
+    # the WINDOWS_EXPORT_ALL_SYMBOLS property to export all global symbols from
+    # the aom_av1_rc DLL on Windows, to match the default behavior on other
+    # platforms.
+    set_target_properties(aom_av1_rc PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+    # The aom_av1_rc library and its header "av1/ratectrl_rtc.h" are not
+    # installed by the "install" command, so we don't need to worry about
+    # versioning the aom_av1_rc shared library. If we start to install the
+    # aom_av1_rc library, the library should be versioned.
+  endif()
   if(NOT WIN32 AND NOT APPLE)
     target_link_libraries(aom_av1_rc ${AOM_LIB_LINK_TYPE} m)
   endif()
@@ -336,7 +353,7 @@ endif()
 
 # List of object and static library targets.
 set(AOM_LIB_TARGETS ${AOM_LIB_TARGETS} aom_rtcd aom_mem aom_scale aom)
-if(CONFIG_AV1_ENCODER AND NOT BUILD_SHARED_LIBS)
+if(CONFIG_AV1_ENCODER)
   set(AOM_LIB_TARGETS ${AOM_LIB_TARGETS} aom_av1_rc)
 endif()
 if(BUILD_SHARED_LIBS)
@@ -374,6 +391,7 @@ file(WRITE "${AOM_GEN_SRC_DIR}/usage_exit.c"
 #
 if(ENABLE_EXAMPLES OR ENABLE_TESTS OR ENABLE_TOOLS)
   add_library(aom_common_app_util OBJECT ${AOM_COMMON_APP_UTIL_SOURCES})
+  add_library(aom_usage_exit OBJECT "${AOM_GEN_SRC_DIR}/usage_exit.c")
   set_property(TARGET ${example} PROPERTY FOLDER examples)
   if(CONFIG_AV1_DECODER)
     add_library(aom_decoder_app_util OBJECT ${AOM_DECODER_APP_UTIL_SOURCES})
@@ -486,19 +504,15 @@ if(CONFIG_AV1_ENCODER)
     add_executable(scalable_encoder "${AOM_ROOT}/examples/scalable_encoder.c"
                                     $<TARGET_OBJECTS:aom_common_app_util>
                                     $<TARGET_OBJECTS:aom_encoder_app_util>)
+    add_executable(svc_encoder_rtc "${AOM_ROOT}/examples/svc_encoder_rtc.cc"
+                                   $<TARGET_OBJECTS:aom_common_app_util>
+                                   $<TARGET_OBJECTS:aom_encoder_app_util>)
+    target_link_libraries(svc_encoder_rtc ${AOM_LIB_LINK_TYPE} aom_av1_rc)
 
     # Maintain a list of encoder example targets.
     list(APPEND AOM_ENCODER_EXAMPLE_TARGETS aomenc lossless_encoder noise_model
                 photon_noise_table set_maps simple_encoder scalable_encoder
-                twopass_encoder)
-
-    if(NOT BUILD_SHARED_LIBS)
-      add_executable(svc_encoder_rtc "${AOM_ROOT}/examples/svc_encoder_rtc.cc"
-                                     $<TARGET_OBJECTS:aom_common_app_util>
-                                     $<TARGET_OBJECTS:aom_encoder_app_util>)
-      target_link_libraries(svc_encoder_rtc ${AOM_LIB_LINK_TYPE} aom_av1_rc)
-      list(APPEND AOM_ENCODER_EXAMPLE_TARGETS svc_encoder_rtc)
-    endif()
+                svc_encoder_rtc twopass_encoder)
   endif()
 
   if(ENABLE_TOOLS)
@@ -508,10 +522,10 @@ if(CONFIG_AV1_ENCODER)
       # aom_entropy_optimizer.c won't work on macos, but dragging in all the
       # helper machinery allows the link to succeed.
       add_executable(aom_entropy_optimizer
-                     "${AOM_GEN_SRC_DIR}/usage_exit.c"
                      "${AOM_ROOT}/tools/aom_entropy_optimizer.c"
                      $<TARGET_OBJECTS:aom_common_app_util>
-                     $<TARGET_OBJECTS:aom_encoder_app_util>)
+                     $<TARGET_OBJECTS:aom_encoder_app_util>
+                     $<TARGET_OBJECTS:aom_usage_exit>)
 
       # Maintain a list of encoder tool targets.
       list(APPEND AOM_ENCODER_TOOL_TARGETS aom_entropy_optimizer)
@@ -661,12 +675,12 @@ endif()
 
 if(ENABLE_TOOLS)
   if(CONFIG_AV1_DECODER)
-    add_executable(dump_obu "${AOM_GEN_SRC_DIR}/usage_exit.c"
-                            "${AOM_ROOT}/tools/dump_obu.cc"
+    add_executable(dump_obu "${AOM_ROOT}/tools/dump_obu.cc"
                             "${AOM_ROOT}/tools/obu_parser.cc"
                             "${AOM_ROOT}/tools/obu_parser.h"
                             $<TARGET_OBJECTS:aom_common_app_util>
-                            $<TARGET_OBJECTS:aom_decoder_app_util>)
+                            $<TARGET_OBJECTS:aom_decoder_app_util>
+                            $<TARGET_OBJECTS:aom_usage_exit>)
 
     list(APPEND AOM_TOOL_TARGETS dump_obu)
     list(APPEND AOM_APP_TARGETS dump_obu)
@@ -825,7 +839,8 @@ if(BUILD_SHARED_LIBS)
   # Clang's AddressSanitizer documentation says "When linking shared libraries,
   # the AddressSanitizer run-time is not linked, so -Wl,-z,defs may cause link
   # errors (don't use it with AddressSanitizer)." See
-  # https://clang.llvm.org/docs/AddressSanitizer.html#usage.
+  # https://clang.llvm.org/docs/AddressSanitizer.html#usage. Similarly, see
+  # https://clang.llvm.org/docs/MemorySanitizer.html#usage.
   if(NOT WIN32
      AND NOT APPLE
      AND NOT (CMAKE_C_COMPILER_ID MATCHES "Clang" AND SANITIZE))
@@ -841,12 +856,6 @@ if(BUILD_SHARED_LIBS)
 
   include("${AOM_ROOT}/build/cmake/exports.cmake")
   setup_exports_target()
-endif()
-
-# Do not allow implicit vector type conversions on Clang builds (this is already
-# the default on GCC builds).
-if(CMAKE_C_COMPILER_ID MATCHES "Clang")
-  append_compiler_flag("-flax-vector-conversions=none")
 endif()
 
 # Handle user supplied compile and link flags last to ensure they're obeyed.

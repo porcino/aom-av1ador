@@ -14,12 +14,19 @@
 #include "config/aom_scale_rtcd.h"
 
 #include "aom_dsp/aom_dsp_common.h"
+#include "aom_dsp/txfm_common.h"
 #include "aom_mem/aom_mem.h"
+#include "aom_util/aom_pthread.h"
+#include "aom_util/aom_thread.h"
 #include "av1/common/av1_loopfilter.h"
+#include "av1/common/blockd.h"
+#include "av1/common/cdef.h"
 #include "av1/common/entropymode.h"
+#include "av1/common/enums.h"
 #include "av1/common/thread_common.h"
 #include "av1/common/reconinter.h"
 #include "av1/common/reconintra.h"
+#include "av1/common/restoration.h"
 
 // Set up nsync by width.
 static INLINE int get_sync_range(int width) {
@@ -377,9 +384,7 @@ static AOM_INLINE void sync_lf_workers(AVxWorker *const workers,
       error_info = ((LFWorkerData *)worker->data2)->error_info;
     }
   }
-  if (had_error)
-    aom_internal_error(cm->error, error_info.error_code, "%s",
-                       error_info.detail);
+  if (had_error) aom_internal_error_copy(cm->error, &error_info);
 }
 
 // Row-based multi-threaded loopfilter hook
@@ -611,7 +616,8 @@ void av1_loop_restoration_alloc(AV1LrSync *lr_sync, AV1_COMMON *cm,
   }
 #endif  // CONFIG_MULTITHREAD
   CHECK_MEM_ERROR(cm, lr_sync->lrworkerdata,
-                  aom_malloc(num_workers * sizeof(*(lr_sync->lrworkerdata))));
+                  aom_calloc(num_workers, sizeof(*(lr_sync->lrworkerdata))));
+  lr_sync->num_workers = num_workers;
 
   for (int worker_idx = 0; worker_idx < num_workers; ++worker_idx) {
     if (worker_idx < num_workers - 1) {
@@ -625,8 +631,6 @@ void av1_loop_restoration_alloc(AV1LrSync *lr_sync, AV1_COMMON *cm,
       lr_sync->lrworkerdata[worker_idx].rlbs = cm->rlbs;
     }
   }
-
-  lr_sync->num_workers = num_workers;
 
   for (int j = 0; j < num_planes; j++) {
     CHECK_MEM_ERROR(
@@ -907,9 +911,7 @@ static AOM_INLINE void sync_lr_workers(AVxWorker *const workers,
       error_info = ((LRWorkerData *)worker->data2)->error_info;
     }
   }
-  if (had_error)
-    aom_internal_error(cm->error, error_info.error_code, "%s",
-                       error_info.detail);
+  if (had_error) aom_internal_error_copy(cm->error, &error_info);
 }
 
 static void foreach_rest_unit_in_planes_mt(AV1LrStruct *lr_ctxt,
@@ -1032,9 +1034,7 @@ static AOM_INLINE void sync_cdef_workers(AVxWorker *const workers,
       error_info = ((AV1CdefWorkerData *)worker->data2)->error_info;
     }
   }
-  if (had_error)
-    aom_internal_error(cm->error, error_info.error_code, "%s",
-                       error_info.detail);
+  if (had_error) aom_internal_error_copy(cm->error, &error_info);
 }
 
 // Updates the row index of the next job to be processed.

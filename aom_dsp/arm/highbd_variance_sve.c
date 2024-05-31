@@ -16,7 +16,7 @@
 #include "config/aom_dsp_rtcd.h"
 
 #include "aom_dsp/aom_filter.h"
-#include "aom_dsp/arm/dot_sve.h"
+#include "aom_dsp/arm/aom_neon_sve_bridge.h"
 #include "aom_dsp/arm/mem_neon.h"
 #include "aom_dsp/variance.h"
 
@@ -348,15 +348,6 @@ static INLINE uint32_t highbd_mse_wxh_sve(const uint16_t *src_ptr,
 }
 
 #define HIGHBD_MSE_WXH_SVE(w, h)                                      \
-  uint32_t aom_highbd_8_mse##w##x##h##_sve(                           \
-      const uint8_t *src_ptr, int src_stride, const uint8_t *ref_ptr, \
-      int ref_stride, uint32_t *sse) {                                \
-    uint16_t *src = CONVERT_TO_SHORTPTR(src_ptr);                     \
-    uint16_t *ref = CONVERT_TO_SHORTPTR(ref_ptr);                     \
-    highbd_mse_wxh_sve(src, src_stride, ref, ref_stride, w, h, sse);  \
-    return *sse;                                                      \
-  }                                                                   \
-                                                                      \
   uint32_t aom_highbd_10_mse##w##x##h##_sve(                          \
       const uint8_t *src_ptr, int src_stride, const uint8_t *ref_ptr, \
       int ref_stride, uint32_t *sse) {                                \
